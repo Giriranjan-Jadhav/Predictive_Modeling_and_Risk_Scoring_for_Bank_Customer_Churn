@@ -12,7 +12,7 @@ st.set_page_config(page_title="Churn Dashboard", layout="wide")
 
 @st.cache_data
 def load_data():
-    df = pd.read_excel("European_Bank.xlsx")
+    df = pd.read_excel(r"C:\Users\GIRIRANJAN\OneDrive\Desktop\European_Bank.xlsx")
     return df
 
 df = load_data()
@@ -22,7 +22,7 @@ def preprocess(df):
     df = df.copy()
 
     df['Balance_Salary_Ratio'] = df['Balance'] / df['Estimated_Salary']
-    df['Product_Density'] = df['Num_Of_Products'] / df['Tenure']
+    df['Product_Density'] = df['Num_Of_Products'] / (df['Tenure'] + 1)
     df['Engagement_Product'] = df['Is_Active_Member'] * df['Num_Of_Products']
     df['Age_Tenure'] = df['Age'] * df['Tenure']
 
@@ -35,8 +35,12 @@ df = preprocess(df)
 
 from sklearn.model_selection import train_test_split
 
+# Convert categorical variables
+
 X = df.drop(['Exited', 'Surname'], axis=1)
 y = df['Exited']
+
+df = pd.get_dummies(df, drop_first=True)
 
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
@@ -57,23 +61,7 @@ def train_models(X_train, y_train):
 
     return trained_models
 
-def evaluate_model(model, X_test, y_test):
-    y_pred = model.predict(X_test)
-    y_prob = model.predict_proba(X_test)[:, 1]
-
-    return {
-        "Accuracy": accuracy_score(y_test, y_pred),
-        "Precision": precision_score(y_test, y_pred),
-        "Recall": recall_score(y_test, y_pred),
-        "F1": f1_score(y_test, y_pred),
-        "ROC-AUC": roc_auc_score(y_test, y_prob)
-    }
-
 trained_models = train_models(X_train, y_train)
-
-rf = trained_models["Random Forest"]
-lr = trained_models["Logistic Regression"]
-gr = trained_models["Gradient Boosting"]
 
 st.sidebar.header("Enter Customer Details")
 
@@ -88,8 +76,7 @@ for col in X.columns:
 
 input_df = pd.DataFrame([input_data])
 
-model_choice = st.selectbox("Choose Model", ["Random Forest", "Logistic Regression","Gradient Boosting"])
-
+model_choice = st.selectbox("Choose Model", ["Random Forest", "Logistic Regression", "Gradient Boosting"])
 model = trained_models[model_choice]
 
 st.title("Customer Churn Prediction Dashboard")
@@ -98,7 +85,6 @@ prob = model.predict_proba(input_df)[0][1]
 prediction = model.predict(input_df)[0]
 
 st.subheader("Prediction Result")
-
 st.write(f"**Churn Probability:** {prob:.2f}")
 
 if prediction == 1:
@@ -153,9 +139,6 @@ temp_df[selected_feature] = new_value
 new_prob = model.predict_proba(temp_df)[0][1]
 
 st.write(f"New Churn Probability: {new_prob:.2f}")
-input_df[selected_feature] = new_value
-
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 st.subheader("Model Evaluation")
 
@@ -168,31 +151,33 @@ st.write("F1 Score:", f1_score(y_test, y_pred))
 
 st.subheader("SHAP Explainability")
 
-explainer = shap.Explainer(model, X_train)
-shap_values = explainer(X_test[:50], check_additivity=False)
-
-fig, ax = plt.subplots()
-shap.plots.beeswarm(shap_values[:, :, 1], show=False)
-st.pyplot(fig)
-
 @st.cache_resource
-def compute_shap(_model, X_train, X_test):
-    explainer = shap.Explainer(_model, X_train)
-    shap_values = explainer(X_test[:200], check_additivity=False)
+def compute_shap(_model, X_train, X_test, model_choice):
+
+    if model_choice in ["Random Forest", "Gradient Boosting"]:
+        explainer = shap.TreeExplainer(_model)
+    else:
+        explainer = shap.LinearExplainer(_model, X_train)
+
+    shap_values = explainer(X_test[:200])
     return shap_values
 
 if st.button("Generate SHAP Plots"):
     with st.spinner("Generating SHAP... ⏳"):
 
-        shap_values = compute_shap(model, X_train, X_test)
+        shap_values = compute_shap(model, X_train, X_test, model_choice)
+
+        if len(shap_values.values.shape) == 3:
+            shap_plot_values = shap_values[:, :, 1]
+        else:
+            shap_plot_values = shap_values
 
         st.write("### SHAP Summary Plot")
         fig1 = plt.figure()
-        import shap
-        shap.summary_plot(shap_values[:200], X_test[:200], show=False)
+        shap.plots.beeswarm(shap_plot_values, show=False)
         st.pyplot(fig1)
 
         st.write("### SHAP Feature Importance")
         fig2 = plt.figure()
-        shap.summary_plot(shap_values[:200], X_test[:200], plot_type="bar", show=False)
+        shap.plots.bar(shap_plot_values, show=False)
         st.pyplot(fig2)
